@@ -1,54 +1,31 @@
-# 🏥 Medical Appointment System - Backend Challenge
+# Medical Appointment API
 
-Sistema backend serverless para agendamiento de citas médicas de asegurados en Perú (PE) y Chile (CL), desarrollado como solución al reto técnico Backend Node.js/AWS Developer.
+API Serverless para gestión de citas médicas, desarrollada como reto técnico.  
+El proyecto sigue principios de arquitectura hexagonal y está desplegado en AWS.
 
----
+## 🚀 Despliegue
 
-## 📋 Tabla de Contenidos
+- **Swagger UI (Documentación):** [https://8hz41jjtu1.execute-api.us-east-1.amazonaws.com/dev/docs](https://8hz41jjtu1.execute-api.us-east-1.amazonaws.com/dev/docs)
+- **OpenAPI Spec (YAML):** [https://8hz41jjtu1.execute-api.us-east-1.amazonaws.com/dev/docs/openapi.yaml](https://8hz41jjtu1.execute-api.us-east-1.amazonaws.com/dev/docs/openapi.yaml)
 
-- [Arquitectura](#-arquitectura)
-- [Tecnologías](#-tecnologías)
-- [Requisitos Previos](#-requisitos-previos)
-- [Instalación](#-instalación)
-- [Configuración de Base de Datos](#-configuración-de-base-de-datos)
-- [Deployment](#-deployment)
-- [API Endpoints](#-api-endpoints)
-- [Testing](#-testing)
-- [Arquitectura del Código](#-arquitectura-del-código)
-- [Monitoreo y Logs](#-monitoreo-y-logs)
-- [Limpieza](#-limpieza)
+## 📌 Funcionalidades
 
----
+- `POST /appointments` → Crear cita médica
+- `GET /appointments/{insuredId}` → Listar citas por asegurado
+- Procesadores asíncronos por país (PE, CL) con SQS
+- Actualización de estado de citas vía cola de completados
 
-## 🏗️ Arquitectura
+## 🛠️ Tecnologías
 
-Sistema **event-driven** usando servicios serverless de AWS:
+- Node.js + TypeScript
+- AWS Lambda, API Gateway, SQS, EventBridge, DynamoDB, RDS
+- Serverless Framework
+- Swagger UI para documentación
+- Jest para testing
 
-### Flujo de Datos
+## ▶️ Uso local
 
-```
-1. Cliente → POST /appointments → API Gateway
-                                      ↓
-2. Lambda (createAppointment) → DynamoDB [status: pending]
-                                      ↓
-3. Lambda → SNS Topic (con filtro por país)
-                                      ↓
-        ┌─────────────────┴─────────────────┐
-        ↓                                   ↓
-   SQS_PE (PE)                         SQS_CL (CL)
-        ↓                                   ↓
-Lambda PE Processor              Lambda CL Processor
-        ↓                                   ↓
-   RDS MySQL PE                       RDS MySQL CL
-        └─────────────────┬─────────────────┘
-                          ↓
-                   EventBridge Bus
-                          ↓
-              SQS Completion Queue
-                          ↓
-          Lambda (statusUpdater)
-                          ↓
-            DynamoDB [status: completed]
-                          ↓
-5. Cliente → GET /appointments/{insuredId} → Listado completo
+```bash
+yarn install
+sls offline
 ```
