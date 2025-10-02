@@ -1,0 +1,235 @@
+openapi: 3.0.3
+info:
+  title: Medical Appointment System API
+  description: |
+    Backend system for scheduling medical appointments for insured patients in Peru (PE) and Chile (CL).
+
+    ## Architecture
+    Event-driven serverless architecture using:
+    - API Gateway + Lambda
+    - DynamoDB (state tracking)
+    - SNS + SQS (message routing)
+    - EventBridge (event bus)
+    - RDS MySQL (permanent storage)
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+
+servers:
+  - url: https://api.example.com/dev
+    description: Development server
+  - url: https://api.example.com/prod
+    description: Production server
+
+tags:
+  - name: Appointments
+    description: Appointment management endpoints
+
+paths:
+  /appointments:
+    post:
+      tags:
+        - Appointments
+      summary: Create a new appointment request
+      description: Creates a new appointment request. The request is processed asynchronously and the status can be checked later.
+      operationId: createAppointment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAppointmentRequest"
+            examples:
+              peru:
+                summary: Appointment in Peru
+                value:
+                  insuredId: "00123"
+                  scheduleId: 100
+                  countryISO: "PE"
+              chile:
+                summary: Appointment in Chile
+                value:
+                  insuredId: "00456"
+                  scheduleId: 200
+                  countryISO: "CL"
+      responses:
+        "201":
+          description: Appointment request created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateAppointmentResponse"
+        "400":
+          description: Bad request - validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /appointments/{insuredId}:
+    get:
+      tags:
+        - Appointments
+      summary: List all appointments for an insured person
+      description: Retrieves all appointments associated with the given insured ID
+      operationId: listAppointments
+      parameters:
+        - name: insuredId
+          in: path
+          required: true
+          description: The 5-digit insured person ID
+          schema:
+            type: string
+            pattern: '^\d{5}$'
+            example: "00123"
+      responses:
+        "200":
+          description: List of appointments retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListAppointmentsResponse"
+        "400":
+          description: Bad request - invalid insuredId
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+    CreateAppointmentRequest:
+      type: object
+      required:
+        - insuredId
+        - scheduleId
+        - countryISO
+      properties:
+        insuredId:
+          type: string
+          description: 5-digit insured person ID (can have leading zeros)
+          pattern: '^\d{5}$'
+          example: "00123"
+        scheduleId:
+          type: integer
+          description: Schedule slot ID (center, specialty, medic, date)
+          minimum: 1
+          example: 100
+        countryISO:
+          type: string
+          description: Country ISO code
+          enum:
+            - PE
+            - CL
+          example: "PE"
+
+    CreateAppointmentResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            appointmentId:
+              type: string
+              format: uuid
+              description: Unique appointment identifier
+              example: "550e8400-e29b-41d4-a716-446655440000"
+            status:
+              type: string
+              enum:
+                - pending
+                - completed
+              example: "pending"
+            message:
+              type: string
+              example: "Appointment request is being processed"
+
+    AppointmentDetail:
+      type: object
+      properties:
+        appointmentId:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        scheduleId:
+          type: integer
+          example: 100
+        countryISO:
+          type: string
+          enum:
+            - PE
+            - CL
+          example: "PE"
+        status:
+          type: string
+          enum:
+            - pending
+            - completed
+          example: "completed"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2024-09-30T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2024-09-30T10:00:05Z"
+
+    ListAppointmentsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            insuredId:
+              type: string
+              example: "00123"
+            appointments:
+              type: array
+              items:
+                $ref: "#/components/schemas/AppointmentDetail"
+            total:
+              type: integer
+              description: Total number of appointments
+              example: 2
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            message:
+              type: string
+              example: "Validation failed"
+            code:
+              type: string
+              example: "VALIDATION_ERROR"

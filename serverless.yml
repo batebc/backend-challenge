@@ -1,0 +1,403 @@
+service: medical-appointment-system
+
+frameworkVersion: "4"
+
+useDotenv: true
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  memorySize: 512
+  timeout: 29
+
+  environment:
+    STAGE: ${self:provider.stage}
+    APPOINTMENTS_TABLE: ${self:custom.appointmentsTable}
+    SNS_TOPIC_ARN: !Ref AppointmentsSNSTopic
+    EVENTBRIDGE_BUS_NAME: ${self:custom.eventBridgeBusName}
+    RDS_PE_HOST: ${env:RDS_PE_HOST}
+    RDS_PE_DATABASE: ${env:RDS_PE_DATABASE, 'appointments_pe'}
+    RDS_PE_USER: ${env:RDS_PE_USER}
+    RDS_PE_PASSWORD: ${env:RDS_PE_PASSWORD}
+    RDS_CL_HOST: ${env:RDS_CL_HOST}
+    RDS_CL_DATABASE: ${env:RDS_CL_DATABASE, 'appointments_cl'}
+    RDS_CL_USER: ${env:RDS_CL_USER}
+    RDS_CL_PASSWORD: ${env:RDS_CL_PASSWORD}
+    NODE_OPTIONS: "--enable-source-maps"
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:Query
+            - dynamodb:UpdateItem
+          Resource:
+            - !GetAtt AppointmentsTable.Arn
+            - !Sub "${AppointmentsTable.Arn}/index/*"
+
+        - Effect: Allow
+          Action:
+            - sns:Publish
+          Resource:
+            - !Ref AppointmentsSNSTopic
+
+        - Effect: Allow
+          Action:
+            - sqs:SendMessage
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+          Resource:
+            - !GetAtt AppointmentsPEQueue.Arn
+            - !GetAtt AppointmentsCLQueue.Arn
+            - !GetAtt AppointmentsCompletionQueue.Arn
+
+        - Effect: Allow
+          Action:
+            - events:PutEvents
+          Resource:
+            - !GetAtt AppointmentsEventBus.Arn
+
+custom:
+  appointmentsTable: appointments-${self:provider.stage}
+  eventBridgeBusName: appointments-event-bus-${self:provider.stage}
+
+  esbuild:
+    bundle: true
+    minify: false
+    sourcemap: true
+    target: node22
+    format: esm
+    platform: node
+    mainFields: ["module", "main"]
+    banner:
+      js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);"
+    exclude:
+      - "@aws-sdk/*"
+    assets:
+      - src/shared/docs/openapi.yaml
+
+  serverless-offline:
+    httpPort: 3000
+
+plugins:
+  - serverless-offline
+
+functions:
+  createAppointment:
+    handler: src/functions/api/create-appointment.handler
+    events:
+      - http:
+          path: appointments
+          method: post
+          cors: true
+    environment:
+      FUNCTION_NAME: createAppointment
+
+  listAppointments:
+    handler: src/functions/api/list-appointments.handler
+    events:
+      - http:
+          path: appointments/{insuredId}
+          method: get
+          cors: true
+    environment:
+      FUNCTION_NAME: listAppointments
+
+  appointmentPE:
+    handler: src/functions/processors/appointment-pe.handler
+    events:
+      - sqs:
+          arn: !GetAtt AppointmentsPEQueue.Arn
+          batchSize: 10
+    environment:
+      FUNCTION_NAME: appointmentPE
+      COUNTRY: PE
+
+  appointmentCL:
+    handler: src/functions/processors/appointment-cl.handler
+    events:
+      - sqs:
+          arn: !GetAtt AppointmentsCLQueue.Arn
+          batchSize: 10
+    environment:
+      FUNCTION_NAME: appointmentCL
+      COUNTRY: CL
+
+  appointmentStatusUpdater:
+    handler: src/functions/updater/appointment-status-updater.handler
+    events:
+      - sqs:
+          arn: !GetAtt AppointmentsCompletionQueue.Arn
+          batchSize: 10
+    environment:
+      FUNCTION_NAME: appointmentStatusUpdater
+
+  swaggerDocs:
+    handler: src/functions/docs/swagger-ui.handler
+    events:
+      - http:
+          path: docs
+          method: get
+          cors: true
+      - http:
+          path: docs/
+          method: get
+          cors: true
+      - http:
+          path: docs/openapi.yaml
+          method: get
+          cors: true
+    environment:
+      FUNCTION_NAME: swaggerDocs
+
+package:
+  patterns:
+    - src/shared/docs/openapi.yaml
+
+resources:
+  Resources:
+    AppointmentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.appointmentsTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+          - AttributeName: GSI1PK
+            AttributeType: S
+          - AttributeName: GSI1SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: GSI1
+            KeySchema:
+              - AttributeName: GSI1PK
+                KeyType: HASH
+              - AttributeName: GSI1SK
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+          - Key: Service
+            Value: ${self:service}
+
+    AppointmentsSNSTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: appointments-topic-${self:provider.stage}
+        DisplayName: Appointments Topic
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+
+    AppointmentsPESubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: sqs
+        TopicArn: !Ref AppointmentsSNSTopic
+        Endpoint: !GetAtt AppointmentsPEQueue.Arn
+        FilterPolicy:
+          countryISO:
+            - PE
+        FilterPolicyScope: MessageAttributes
+
+    AppointmentsCLSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: sqs
+        TopicArn: !Ref AppointmentsSNSTopic
+        Endpoint: !GetAtt AppointmentsCLQueue.Arn
+        FilterPolicy:
+          countryISO:
+            - CL
+        FilterPolicyScope: MessageAttributes
+
+    AppointmentsPEQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointments-pe-queue-${self:provider.stage}
+        VisibilityTimeout: 180
+        MessageRetentionPeriod: 1209600
+        ReceiveMessageWaitTimeSeconds: 20
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt AppointmentsPEDLQ.Arn
+          maxReceiveCount: 3
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+          - Key: Country
+            Value: PE
+
+    AppointmentsCLQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointments-cl-queue-${self:provider.stage}
+        VisibilityTimeout: 180
+        MessageRetentionPeriod: 1209600
+        ReceiveMessageWaitTimeSeconds: 20
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt AppointmentsCLDLQ.Arn
+          maxReceiveCount: 3
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+          - Key: Country
+            Value: CL
+
+    AppointmentsPEDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointments-pe-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+
+    AppointmentsCLDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointments-cl-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+
+    AppointmentsCompletionQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointments-completion-queue-${self:provider.stage}
+        VisibilityTimeout: 180
+        MessageRetentionPeriod: 1209600
+        ReceiveMessageWaitTimeSeconds: 20
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt AppointmentsCompletionDLQ.Arn
+          maxReceiveCount: 3
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+
+    AppointmentsCompletionDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointments-completion-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+
+    AppointmentsPEQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref AppointmentsPEQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: sns.amazonaws.com
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt AppointmentsPEQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref AppointmentsSNSTopic
+
+    AppointmentsCLQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref AppointmentsCLQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: sns.amazonaws.com
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt AppointmentsCLQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref AppointmentsSNSTopic
+
+    AppointmentsCompletionQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref AppointmentsCompletionQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt AppointmentsCompletionQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt AppointmentsEventBridgeRule.Arn
+
+    AppointmentsEventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: ${self:custom.eventBridgeBusName}
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+
+    AppointmentsEventBridgeRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: appointment-completed-rule-${self:provider.stage}
+        Description: Route appointment completed events to SQS
+        EventBusName: !Ref AppointmentsEventBus
+        EventPattern:
+          source:
+            - appointment.processor
+          detail-type:
+            - AppointmentCompleted
+        State: ENABLED
+        Targets:
+          - Arn: !GetAtt AppointmentsCompletionQueue.Arn
+            Id: AppointmentCompletionQueue
+
+  Outputs:
+    AppointmentsTableName:
+      Description: DynamoDB Appointments Table Name
+      Value: !Ref AppointmentsTable
+      Export:
+        Name: ${self:provider.stage}-AppointmentsTable
+
+    AppointmentsSNSTopicArn:
+      Description: SNS Topic ARN
+      Value: !Ref AppointmentsSNSTopic
+      Export:
+        Name: ${self:provider.stage}-AppointmentsSNSTopic
+
+    AppointmentsEventBusName:
+      Description: EventBridge Bus Name
+      Value: !Ref AppointmentsEventBus
+      Export:
+        Name: ${self:provider.stage}-AppointmentsEventBus
+
+    ApiEndpoint:
+      Description: API Gateway endpoint URL
+      Value: !Sub "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${self:provider.stage}"
