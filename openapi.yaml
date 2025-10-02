@@ -1,0 +1,107 @@
+openapi: 3.0.1
+info:
+  title: Medical Appointment System API
+  description: API REST para gestión de citas médicas en Perú (PE) y Chile (CL).
+  version: 1.0.0
+
+servers:
+  - url: https://8hz41jjtu1.execute-api.us-east-1.amazonaws.com/dev
+    description: AWS API Gateway (dev)
+
+paths:
+  /appointments:
+    post:
+      summary: Crear cita
+      description: Crea una nueva solicitud de cita médica.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                insuredId:
+                  type: string
+                  example: "00123"
+                scheduleId:
+                  type: integer
+                  example: 100
+                countryISO:
+                  type: string
+                  enum: [PE, CL]
+                  example: PE
+      responses:
+        "201":
+          description: Cita creada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      appointmentId:
+                        type: string
+                        format: uuid
+                      status:
+                        type: string
+                        enum: [pending, completed]
+                      message:
+                        type: string
+
+  /appointments/{insuredId}:
+    get:
+      summary: Listar citas por asegurado
+      description: Obtiene todas las citas de un asegurado por su ID.
+      parameters:
+        - name: insuredId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "00123"
+      responses:
+        "200":
+          description: Lista de citas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      insuredId:
+                        type: string
+                      appointments:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            appointmentId:
+                              type: string
+                              format: uuid
+                            scheduleId:
+                              type: integer
+                            countryISO:
+                              type: string
+                              enum: [PE, CL]
+                            status:
+                              type: string
+                              enum: [pending, completed]
+                            createdAt:
+                              type: string
+                              format: date-time
+                            updatedAt:
+                              type: string
+                              format: date-time
+                      total:
+                        type: integer
+                        example: 2

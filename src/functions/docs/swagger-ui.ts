@@ -7,6 +7,7 @@ export const handler = async (
 ): Promise<APIGatewayProxyResult> => {
   const path = event.path;
 
+  // 1. Servir la UI (Swagger visual)
   if (path === "/docs" || path === "/docs/") {
     const html = `
 <!DOCTYPE html>
@@ -15,7 +16,9 @@ export const handler = async (
   <meta charset="UTF-8">
   <title>Medical Appointment API - Documentation</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui.css" />
-  <style>body { margin: 0; padding: 0; }</style>
+  <style>
+    body { margin: 0; padding: 0; }
+  </style>
 </head>
 <body>
   <div id="swagger-ui"></div>
@@ -23,7 +26,7 @@ export const handler = async (
   <script>
     window.onload = function() {
       SwaggerUIBundle({
-        url: window.location.pathname.replace(/\\/$/, "") + "/openapi.yaml",
+        url: "/dev/docs/openapi.yaml",   // 👈 importante: API Gateway prefix
         dom_id: '#swagger-ui',
         deepLinking: true,
         presets: [
@@ -37,22 +40,26 @@ export const handler = async (
 </body>
 </html>
     `;
+
     return {
       statusCode: 200,
-      headers: { "Content-Type": "text/html" },
+      headers: {
+        "Content-Type": "text/html",
+      },
       body: html,
     };
   }
 
-  if (path.endsWith("/docs/openapi.yaml")) {
+  // 2. Servir el YAML (para Swagger)
+  if (path === "/docs/openapi.yaml") {
     try {
-      const yamlPath = join(__dirname, "../../shared/docs/openapi.yaml");
+      const yamlPath = join(process.cwd(), "openapi.yaml"); // 👈 raíz del bundle
       const yamlContent = readFileSync(yamlPath, "utf8");
 
       return {
         statusCode: 200,
         headers: {
-          "Content-Type": "application/x-yaml",
+          "Content-Type": "application/yaml",
           "Access-Control-Allow-Origin": "*",
         },
         body: yamlContent,
@@ -65,5 +72,9 @@ export const handler = async (
     }
   }
 
-  return { statusCode: 404, body: JSON.stringify({ error: "Not found" }) };
+  // 3. Rutas no encontradas
+  return {
+    statusCode: 404,
+    body: JSON.stringify({ error: "Not found" }),
+  };
 };

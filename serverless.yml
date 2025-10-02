@@ -146,10 +146,6 @@ functions:
           method: get
           cors: true
       - http:
-          path: docs/
-          method: get
-          cors: true
-      - http:
           path: docs/openapi.yaml
           method: get
           cors: true
@@ -158,7 +154,7 @@ functions:
 
 package:
   patterns:
-    - src/shared/docs/openapi.yaml
+    - openapi.yaml
 
 resources:
   Resources:
